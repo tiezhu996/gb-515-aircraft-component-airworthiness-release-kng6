@@ -1,6 +1,49 @@
 # 验证记录
 
-验证日期：2026-08-22（Asia/Shanghai）
+## 2026-09-23 放行授权联动部件状态
+
+验证日期：2026-09-23（Asia/Shanghai）
+
+### 代码质量
+
+以下命令均实际执行成功：
+
+```bash
+cd backend
+gofmt -w internal/model/release_authorization.go internal/repository/release_authorization.go
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./...
+
+cd ../frontend
+npm run typecheck
+npm run build
+```
+
+### 服务层回归（`internal/service/part_linkage_test.go`）
+
+- 部件 `hold` 时提交复核被阻止：返回 `PartLinkBlockedError`（含部件编号），授权保持 `draft` v1，阻塞原因持久化并可通过 `Get` 回读，`link_blocked` 审计写入。
+- 部件 `retired` 时批准被阻止：授权保持 `review`；review 状态授权不被联动吊销。
+- 权限顺序不变：operator 批准仍 403、同人复核仍职责分离拒绝，门禁在权限检查之后执行。
+- 部件恢复后提交成功，持久化的阻塞原因被清除。
+- 无关联部件（编号不存在）时双人复核流程不受影响。
+- 部件进入 `hold`：approved 与 restricted 授权在同一事务记为 `revoked`，批准版本保留在版本链中，`linkOutcome` 记录联动结果，审计数量精确。
+- 并发 8 个相同版本号的部件迁移：恰好 1 个成功，其余版本冲突或状态机拒绝，授权只被吊销一次。
+- 注入版本链冲突强制联动失败：部件迁移整体回滚，授权与审计无任何半更新。
+- 列表接口携带实时部件状态。
+
+### SQLite 端到端 API（开发模式实际运行）
+
+- 部件 `received -> hold` 后提交复核：HTTP 409 `part_link_blocked`，报文含部件编号；`GET` 回读显示 `linkedPartStatus=hold` 与持久化阻塞原因，状态与版本不变。
+- 部件恢复 `inspection` 后提交复核成功，阻塞原因清空；operator 自批仍 403；reviewer 批准为 v3。
+- 部件 `inspection -> hold`：授权同事务变为 `revoked` v4，版本链保留 approved v3，`linkOutcome` 记录部件编号与目标状态。
+- 种子部件 AP-004 `released -> retired`：RA-003 联动吊销，批准版本保留。
+- 6 个并发相同版本号的部件 `hold` 迁移：恰好 1 个 HTTP 200，其余 409/422；授权恰好吊销一次（4 个版本、4 条审计）。
+- 授权与部件审计历史顺序正确，`link_blocked` 审计 before=after=draft。
+- 放行授权列表实时回读每条记录的部件状态、阻塞原因和联动结果。
+
+## 2026-08-22 基线验证
 
 ## 代码质量
 

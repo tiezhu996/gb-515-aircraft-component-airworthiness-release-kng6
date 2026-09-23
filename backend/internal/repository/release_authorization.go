@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"time"
 
+	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/constants"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/dto"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/model"
 	"gorm.io/gorm"
@@ -14,6 +16,8 @@ type ReleaseAuthorizationRepository interface {
 	Get(context.Context, uint) (model.ReleaseAuthorization, error)
 	CreateVersion(context.Context, *model.ReleaseAuthorization, string, string) error
 	UpdateVersion(context.Context, uint, uint, *model.ReleaseAuthorization, string, string, string, string, string) error
+	RecordLinkBlock(context.Context, uint, string, string, string, string) error
+	RevokeLinkedActive(*gorm.DB, string, string, string, string) error
 	Delete(context.Context, uint) error
 	CountByStatus(context.Context) (map[string]int64, error)
 }
@@ -91,6 +95,61 @@ func (r *releaseAuthorizationRepository) UpdateVersion(ctx context.Context, id, 
 		}
 		return appendAudit(tx, actor, requestID, action, "ReleaseAuthorization", id, before, item.Status, reason)
 	})
+}
+
+// RecordLinkBlock persists the reason a submit/approve attempt was blocked by
+// the linked part state. The authorization version and status stay untouched
+// (保持原状态); only the reason column and an audit entry are written.
+func (r *releaseAuthorizationRepository) RecordLinkBlock(ctx context.Context, id uint, status, reason, actor, requestID string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.ReleaseAuthorization{}).Where("id = ?", id).
+			UpdateColumns(map[string]any{"link_block_reason": reason})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return appendAudit(tx, actor, requestID, "link_blocked", "ReleaseAuthorization", id, status, status, reason)
+	})
+}
+
+// RevokeLinkedActive runs inside the caller's transaction: every approved or
+// restricted authorization linked to partCode is marked revoked with its own
+// optimistic-lock check, a new revision (the approved version stays in the
+// chain) and an audit entry. Any conflict aborts the whole transaction.
+func (r *releaseAuthorizationRepository) RevokeLinkedActive(tx *gorm.DB, partCode, actor, requestID, detail string) error {
+	active := []string{string(constants.AuthorizationStateApproved), string(constants.AuthorizationStateRestricted)}
+	var items []model.ReleaseAuthorization
+	if err := tx.Where("related_code = ? AND status IN ?", partCode, active).Find(&items).Error; err != nil {
+		return err
+	}
+	for index := range items {
+		item := items[index]
+		before := item.Status
+		expectedVersion := item.Version
+		item.Status = string(constants.AuthorizationStateRevoked)
+		item.Version = expectedVersion + 1
+		item.UpdatedAt = time.Now().UTC()
+		item.LinkBlockReason = ""
+		item.LinkOutcome = detail
+		item.Revisions = nil
+		if err := optimisticUpdate(tx, item.ID, expectedVersion, &item); err != nil {
+			return err
+		}
+		revision := model.ReleaseAuthorizationRevision{
+			ReleaseAuthorizationID: item.ID, Version: item.Version, Status: item.Status,
+			Evidence: item.Evidence, Actor: actor, RequestID: requestID, Action: "transition",
+			Reason: detail, CreatedAt: item.UpdatedAt,
+		}
+		if err := tx.Create(&revision).Error; err != nil {
+			return err
+		}
+		if err := appendAudit(tx, actor, requestID, "transition", "ReleaseAuthorization", item.ID, before, item.Status, detail); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (r *releaseAuthorizationRepository) Delete(ctx context.Context, id uint) error {
 	return r.store.Delete(ctx, id)

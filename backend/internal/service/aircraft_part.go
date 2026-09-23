@@ -10,6 +10,7 @@ import (
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/dto"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/model"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/repository"
+	"gorm.io/gorm"
 )
 
 type AircraftPartService interface {
@@ -23,12 +24,13 @@ type AircraftPartService interface {
 }
 
 type aircraftPartService struct {
-	repository repository.AircraftPartRepository
-	security   SecurityService
+	repository    repository.AircraftPartRepository
+	security      SecurityService
+	authorization repository.ReleaseAuthorizationRepository
 }
 
-func NewAircraftPartService(repo repository.AircraftPartRepository, security SecurityService) AircraftPartService {
-	return &aircraftPartService{repository: repo, security: security}
+func NewAircraftPartService(repo repository.AircraftPartRepository, security SecurityService, authorization repository.ReleaseAuthorizationRepository) AircraftPartService {
+	return &aircraftPartService{repository: repo, security: security, authorization: authorization}
 }
 
 func (s *aircraftPartService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.AircraftPart], error) {
@@ -102,11 +104,17 @@ func (s *aircraftPartService) Transition(ctx context.Context, id uint, input dto
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
-	if err := s.repository.Update(ctx, id, input.ExpectedVersion, &current); err != nil {
-		return model.AircraftPart{}, fmt.Errorf("transition 航空部件: %w", err)
+	// 部件进入 hold/retired 时，同一事务把已批准的关联授权记为 revoked；
+	// 乐观锁保证并发下只有一个请求成功，失败整体回滚不留半更新。
+	linkage := func(tx *gorm.DB) error {
+		if target != string(constants.PartStateHold) && target != string(constants.PartStateRetired) {
+			return nil
+		}
+		detail := fmt.Sprintf("关联部件 %s 进入 %s，已批准授权联动吊销", current.Code, target)
+		return s.authorization.RevokeLinkedActive(tx, current.Code, actor, requestID, detail)
 	}
-	if err := s.security.Audit(ctx, actor, requestID, "transition", "AircraftPart", id, before, target, input.Reason); err != nil {
-		return model.AircraftPart{}, fmt.Errorf("persist transition audit: %w", err)
+	if err := s.repository.TransitionWithLinkage(ctx, id, input.ExpectedVersion, &current, actor, requestID, before, strings.TrimSpace(input.Reason), linkage); err != nil {
+		return model.AircraftPart{}, fmt.Errorf("transition 航空部件: %w", err)
 	}
 	return s.repository.Get(ctx, id)
 }

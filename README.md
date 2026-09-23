@@ -40,6 +40,8 @@ docker compose down -v --remove-orphans
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC，数据库角色、Gin middleware、React 路由守卫和按钮权限一致。
 - 放行必须经过 `draft -> review -> approved/restricted`，提交者与复核者必须是不同账号，operator 无法自批。
+- 放行授权按 `relatedCode` 联动部件状态：提交复核和批准前读取关联部件，部件为 `hold`/`retired` 时保持原状态并返回部件编号；批准后部件进入 `hold`/`retired` 时，同一事务把授权记为 `revoked` 并保留批准版本，乐观锁保证并发下只成功一次、失败不留半更新。
+- 放行页展示部件状态、阻塞原因和联动结果，三者均由服务端持久化或实时解析，刷新可回读。
 - 证书发布同样要求 reviewer/admin，且发布者不能是当前版本的编制人。
 - 证书和授权的每次创建、草稿更新与状态变化都在同一事务写入不可变版本快照和审计日志。
 - 所有状态变化使用乐观锁；复核开始后业务字段锁定，防止覆盖已审证据。

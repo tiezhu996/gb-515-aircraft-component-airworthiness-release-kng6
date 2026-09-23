@@ -36,7 +36,14 @@ export function createEntityStore() {
       try {
         await request<DomainRecord>(`/${path}/${item.id}/transition`, { method: 'POST', body: JSON.stringify({ status, expectedVersion: item.version, reason: '前端工作台人工确认' }) });
         await get().load(path);
-      } catch (error) { set({ error: error instanceof Error ? error.message : String(error), loading: false }); throw error; }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Reload so server-persisted linkage state (阻塞原因/联动结果) shows up
+        // immediately, then restore the failure message for the alert.
+        try { await get().load(path); } catch { /* keep the original failure visible */ }
+        set({ error: message, loading: false });
+        throw error;
+      }
     },
   }));
 }

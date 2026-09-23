@@ -15,6 +15,9 @@ export interface DomainRecord {
   effectiveAt: string;
   evidence: string;
 	relatedCode: string;
+	linkedPartStatus?: string;
+	linkBlockReason?: string;
+	linkOutcome?: string;
 	preparedBy?: string;
 	verifiedBy?: string;
 	submittedBy?: string;
