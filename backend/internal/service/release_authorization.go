@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -82,6 +83,11 @@ func (s *releaseAuthorizationService) Update(ctx context.Context, id uint, input
 	current.EffectiveAt = input.EffectiveAt.UTC()
 	current.Evidence = strings.TrimSpace(input.Evidence)
 	current.RelatedCode = strings.ToUpper(strings.TrimSpace(input.RelatedCode))
+	// Draft edits clear stale linkage checkpoints so a later decision always
+	// re-evaluates the currently linked part.
+	current.RelatedPartStatus = ""
+	current.BlockReason = ""
+	current.LinkageResult = ""
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
 	if err := s.repository.UpdateVersion(ctx, id, input.ExpectedVersion, &current, actor, requestID, "update", current.Status, "draft authorization fields updated"); err != nil {
@@ -121,6 +127,32 @@ func (s *releaseAuthorizationService) Transition(ctx context.Context, id uint, i
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
+
+	// Submit-for-review and dual-control approval/restriction must read the
+	// linked part first: hold or retired (or a missing link) keeps the
+	// authorization in its original state. The gate runs in the same
+	// transaction as the versioned write so the part cannot change in between.
+	linkageGated := target == "review" || target == "approved" || target == "restricted"
+	if linkageGated {
+		outcome, err := s.repository.UpdateVersionWithLinkage(ctx, id, input.ExpectedVersion, &current, actor, requestID, "transition", before, strings.TrimSpace(input.Reason))
+		if err != nil {
+			if errors.Is(err, repository.ErrLinkageBlocked) {
+				return model.ReleaseAuthorization{}, &LinkageBlockedError{
+					PartCode:   outcome.PartCode,
+					PartStatus: outcome.PartStatus,
+					Reason:     outcome.BlockReason,
+				}
+			}
+			return model.ReleaseAuthorization{}, fmt.Errorf("transition 放行授权: %w", err)
+		}
+		return s.repository.Get(ctx, id)
+	}
+
+	// Send-back to draft and manual revocation skip the forward gate; clear a
+	// stale block checkpoint because it no longer describes the decision.
+	current.RelatedPartStatus = ""
+	current.BlockReason = ""
+	current.LinkageResult = ""
 	if err := s.repository.UpdateVersion(ctx, id, input.ExpectedVersion, &current, actor, requestID, "transition", before, strings.TrimSpace(input.Reason)); err != nil {
 		return model.ReleaseAuthorization{}, fmt.Errorf("transition 放行授权: %w", err)
 	}

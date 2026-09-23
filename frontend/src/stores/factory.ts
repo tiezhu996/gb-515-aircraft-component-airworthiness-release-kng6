@@ -36,7 +36,15 @@ export function createEntityStore() {
       try {
         await request<DomainRecord>(`/${path}/${item.id}/transition`, { method: 'POST', body: JSON.stringify({ status, expectedVersion: item.version, reason: '前端工作台人工确认' }) });
         await get().load(path);
-      } catch (error) { set({ error: error instanceof Error ? error.message : String(error), loading: false }); throw error; }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // The decision may have kept its original state while persisting a
+        // block checkpoint; reload so the row shows the latest linkage result,
+        // then restore the server message (load clears error on success).
+        await get().load(path);
+        set({ error: message, loading: false });
+        throw error;
+      }
     },
   }));
 }

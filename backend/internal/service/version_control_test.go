@@ -58,6 +58,9 @@ func TestCertificateVersionChainRequiresIndependentReviewer(t *testing.T) {
 
 func TestAuthorizationVersionChainEnforcesDualControl(t *testing.T) {
 	db := newVersionTestDB(t)
+	// The authorization links to PART-101; an inspection (releasable) part
+	// lets the dual-control chain proceed.
+	seedPart(t, db, "PART-101", "inspection")
 	service := NewReleaseAuthorizationService(repository.NewReleaseAuthorizationRepository(db), nil)
 	ctx := context.Background()
 
@@ -108,12 +111,28 @@ func newVersionTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&model.AuditLog{}, &model.CertificateRecord{}, &model.CertificateRecordRevision{},
+		&model.AuditLog{}, &model.AircraftPart{},
+		&model.CertificateRecord{}, &model.CertificateRecordRevision{},
 		&model.ReleaseAuthorization{}, &model.ReleaseAuthorizationRevision{},
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	return db
+}
+
+func seedPart(t *testing.T, db *gorm.DB, code, status string) {
+	t.Helper()
+	part := model.AircraftPart{
+		BaseModel: model.BaseModel{
+			Code: code, Name: "Linked component " + code, Status: status, Version: 1,
+		},
+		Facility: "Hangar 2", Owner: "Release desk", Category: "engine", RiskLevel: "high",
+		MetricValue: 100, MetricUnit: "percent", EffectiveAt: time.Now().UTC(),
+		Evidence: "inspection IR-101", RelatedCode: "PLAN-101",
+	}
+	if err := db.Create(&part).Error; err != nil {
+		t.Fatalf("seed part: %v", err)
+	}
 }
 
 func certificateInput(code string) dto.CreateCertificateRecord {

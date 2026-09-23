@@ -12,7 +12,13 @@ import (
 )
 
 func handleError(c *gin.Context, err error) {
+	var linkageBlocked *service.LinkageBlockedError
 	switch {
+	case errors.As(err, &linkageBlocked):
+		util.FailDetailed(c, http.StatusConflict, "part_linkage_blocked", linkageBlocked.Error(), gin.H{
+			"partCode":   linkageBlocked.PartCode,
+			"partStatus": linkageBlocked.PartStatus,
+		})
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		util.Fail(c, http.StatusNotFound, "not_found", "record was not found")
 	case errors.Is(err, repository.ErrVersionConflict):

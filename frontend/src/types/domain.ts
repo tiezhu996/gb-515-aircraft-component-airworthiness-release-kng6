@@ -20,6 +20,9 @@ export interface DomainRecord {
 	submittedBy?: string;
 	reviewedBy?: string;
 	reviewReason?: string;
+	relatedPartStatus?: string;
+	blockReason?: string;
+	linkageResult?: string;
 	revisions?: VersionRevision[];
 	createdAt: string;
 	updatedAt: string;

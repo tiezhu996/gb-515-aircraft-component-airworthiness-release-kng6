@@ -36,6 +36,14 @@ td small { display: block; color: #7d8d97; margin-top: 4px; }
 .status--success { color: #176c55; background: #dff3ec; }.status--warning { color: #8a5a08; background: #fff1ce; }.status--danger { color: #9d2c37; background: #fde4e6; }.status--neutral { color: #506572; background: #e9eff2; }
 .part-status { gap: 6px; text-transform: none; white-space: nowrap; }
 .part-status__signal { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 7px; }
+.linkage-pill { display: inline-flex; align-items: center; border-radius: 3px; padding: 4px 8px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.linkage-pill--clear { color: #176c55; background: #dff3ec; }
+.linkage-pill--blocked { color: #922b34; background: #fde4e6; }
+.linkage-pill--revoked { color: #8a5a08; background: #f7e7c3; }
+.linkage-pill--unlinked { color: #506572; background: #e9eff2; }
+.block-reason { display: inline-block; max-width: 260px; color: #922b34; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.row-blocked td { background: #fdf6f6; }
+.linkage-legend { margin-top: 12px; color: #667886; font-size: 12px; line-height: 1.6; }
 .table-action, .link-button { border: 0; background: none; color: #167c66; cursor: pointer; font-weight: 650; padding: 5px; }
 .access-note { display: inline-flex; align-items: center; min-height: 36px; color: #667886; border: 1px solid #bdcbd3; padding: 7px 11px; font-size: 13px; }
 .muted, .empty { color: #82919a; }.empty { text-align: center; padding: 40px; }

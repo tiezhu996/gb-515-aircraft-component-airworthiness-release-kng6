@@ -102,11 +102,11 @@ func (s *aircraftPartService) Transition(ctx context.Context, id uint, input dto
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
-	if err := s.repository.Update(ctx, id, input.ExpectedVersion, &current); err != nil {
+	// The transition and every linked authorization revocation share one
+	// transaction so concurrent part moves can only succeed once and no
+	// half-update (part moved but authorization not revoked) is left behind.
+	if _, err := s.repository.TransitionVersion(ctx, id, input.ExpectedVersion, &current, actor, requestID, before, strings.TrimSpace(input.Reason)); err != nil {
 		return model.AircraftPart{}, fmt.Errorf("transition 航空部件: %w", err)
-	}
-	if err := s.security.Audit(ctx, actor, requestID, "transition", "AircraftPart", id, before, target, input.Reason); err != nil {
-		return model.AircraftPart{}, fmt.Errorf("persist transition audit: %w", err)
 	}
 	return s.repository.Get(ctx, id)
 }

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 
+	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/constants"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/dto"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/model"
 	"gorm.io/gorm"
@@ -14,6 +15,9 @@ type ReleaseAuthorizationRepository interface {
 	Get(context.Context, uint) (model.ReleaseAuthorization, error)
 	CreateVersion(context.Context, *model.ReleaseAuthorization, string, string) error
 	UpdateVersion(context.Context, uint, uint, *model.ReleaseAuthorization, string, string, string, string, string) error
+	// UpdateVersionWithLinkage behaves like UpdateVersion but enforces the
+	// linked-part gate inside the same transaction before any state change.
+	UpdateVersionWithLinkage(context.Context, uint, uint, *model.ReleaseAuthorization, string, string, string, string, string) (LinkageOutcome, error)
 	Delete(context.Context, uint) error
 	CountByStatus(context.Context) (map[string]int64, error)
 }
@@ -91,6 +95,65 @@ func (r *releaseAuthorizationRepository) UpdateVersion(ctx context.Context, id, 
 		}
 		return appendAudit(tx, actor, requestID, action, "ReleaseAuthorization", id, before, item.Status, reason)
 	})
+}
+
+func (r *releaseAuthorizationRepository) UpdateVersionWithLinkage(ctx context.Context, id, expectedVersion uint, item *model.ReleaseAuthorization, actor, requestID, action, before, reason string) (LinkageOutcome, error) {
+	outcome := LinkageOutcome{PartCode: item.RelatedCode}
+	if item.RelatedCode == "" {
+		// No linked part: run the normal versioned transition and clear any
+		// stale linkage checkpoint in the same atomic write.
+		item.RelatedPartStatus = ""
+		item.BlockReason = ""
+		item.LinkageResult = constants.LinkageResultUnlinked
+		return outcome, r.UpdateVersion(ctx, id, expectedVersion, item, actor, requestID, action, before, reason)
+	}
+
+	// Begin explicitly so a blocked decision can rollback while its checkpoint
+	// is committed independently. The part row lock is held until commit,
+	// preventing a part transition from racing the approval.
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return outcome, tx.Error
+	}
+	checkpoint, err := EvaluateAuthorizationLinkage(tx, item.RelatedCode)
+	if err != nil {
+		_ = tx.Rollback().Error
+		return outcome, err
+	}
+	outcome = checkpoint
+	if checkpoint.Blocked {
+		if rbErr := tx.Rollback().Error; rbErr != nil {
+			return outcome, rbErr
+		}
+		// Commit only the linkage metadata (no status/version/revision change).
+		if err := PersistLinkageCheckpoint(ctx, r.db, id, checkpoint.PartStatus, checkpoint.BlockReason, constants.LinkageResultBlocked); err != nil {
+			return outcome, err
+		}
+		return outcome, ErrLinkageBlocked
+	}
+
+	item.RelatedPartStatus = checkpoint.PartStatus
+	item.BlockReason = ""
+	item.LinkageResult = constants.LinkageResultClear
+	item.Revisions = nil
+	if err := optimisticUpdate(tx, id, expectedVersion, item); err != nil {
+		_ = tx.Rollback().Error
+		return outcome, err
+	}
+	revision := model.ReleaseAuthorizationRevision{
+		ReleaseAuthorizationID: id, Version: item.Version, Status: item.Status,
+		Evidence: item.Evidence, Actor: actor, RequestID: requestID, Action: action,
+		Reason: reason, CreatedAt: item.UpdatedAt,
+	}
+	if err := tx.Create(&revision).Error; err != nil {
+		_ = tx.Rollback().Error
+		return outcome, err
+	}
+	if err := appendAudit(tx, actor, requestID, action, "ReleaseAuthorization", id, before, item.Status, reason); err != nil {
+		_ = tx.Rollback().Error
+		return outcome, err
+	}
+	return outcome, tx.Commit().Error
 }
 func (r *releaseAuthorizationRepository) Delete(ctx context.Context, id uint) error {
 	return r.store.Delete(ctx, id)

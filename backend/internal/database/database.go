@@ -148,6 +148,11 @@ func seedAircraftPart(ctx context.Context, db *gorm.DB) error {
 			Description: "用于启动验证和主要流程演示的航空部件记录"}, Facility: "航空部件适航放行区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-03"},
+
+		{BaseModel: model.BaseModel{Code: "AP-004", Name: "航空部件示例四", Status: "released", Version: 1,
+			Description: "已放行部件：将其推进到 hold/retired 可演示授权联动撤销"}, Facility: "航空部件适航放行区域4", Owner: "运行二组",
+			Category: "重点", RiskLevel: "medium", MetricValue: 50.0, MetricUnit: "unit",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "已完成放行证据核对", RelatedCode: "REL-515-04"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
 }
@@ -228,17 +233,25 @@ func seedReleaseAuthorization(ctx context.Context, db *gorm.DB) error {
 		{BaseModel: model.BaseModel{Code: "RA-001", Name: "放行授权示例一", Status: "draft", Version: 1,
 			Description: "用于启动验证和主要流程演示的放行授权记录"}, Facility: "航空部件适航放行区域1", Owner: "运行一组",
 			Category: "常规", RiskLevel: "low", MetricValue: 12.5, MetricUnit: "unit",
-			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-01"},
+			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "AP-001"},
 
 		{BaseModel: model.BaseModel{Code: "RA-002", Name: "放行授权示例二", Status: "review", Version: 1,
 			Description: "用于启动验证和主要流程演示的放行授权记录"}, Facility: "航空部件适航放行区域2", Owner: "质量复核组",
 			Category: "重点", RiskLevel: "medium", MetricValue: 25.0, MetricUnit: "%",
-			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-02", SubmittedBy: "operator"},
+			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "AP-002", SubmittedBy: "operator",
+			RelatedPartStatus: "inspection", LinkageResult: "clear"},
 
 		{BaseModel: model.BaseModel{Code: "RA-003", Name: "放行授权示例三", Status: "approved", Version: 1,
-			Description: "用于启动验证和主要流程演示的放行授权记录"}, Facility: "航空部件适航放行区域3", Owner: "安全主管组",
+			Description: "已批准并随 AP-004 放行；部件进入 hold/retired 时将同事务撤销"}, Facility: "航空部件适航放行区域4", Owner: "运行二组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
-			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-03", SubmittedBy: "operator", ReviewedBy: "reviewer", ReviewReason: "演示数据双人复核通过"},
+			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "AP-004", SubmittedBy: "operator", ReviewedBy: "reviewer", ReviewReason: "演示数据双人复核通过",
+			RelatedPartStatus: "released", LinkageResult: "clear"},
+
+		{BaseModel: model.BaseModel{Code: "RA-004", Name: "放行授权示例四", Status: "review", Version: 1,
+			Description: "关联 AP-003 处于暂停，批准时联动拦截并保留待复核状态"}, Facility: "航空部件适航放行区域3", Owner: "安全主管组",
+			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "AP-003", SubmittedBy: "operator",
+			RelatedPartStatus: "hold", BlockReason: "关联部件 AP-003 当前为 暂停（hold），禁止提交复核或批准", LinkageResult: "blocked"},
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&items).Error; err != nil {
